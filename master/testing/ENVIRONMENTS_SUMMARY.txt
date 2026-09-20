@@ -1,0 +1,235 @@
+================================================================================
+                    TESTING ENVIRONMENTS QUICK REFERENCE
+================================================================================
+
+ENVIRONMENT    | NODES | CAPACITY | ARRIVAL | SLACK      | FAILURES  | PURPOSE
+               |       |          | RATE    |            |           |
+===============+-------+----------+---------+------------+-----------+===========
+LIGHT          | 4     | 4        | 1.0     | 6–15 steps | Very low  | Debug/Learn
+SANDBOX        | 6     | 4        | 2.0     | 4–10 steps | Balanced  | Baseline
+MEDIUM         | 8     | 4        | 3.0     | 3–8 steps  | Higher    | Real-world
+HARD           | 12    | 3        | 4.5     | 2–5 steps  | Aggressive| Stress test
+EXTREME        | 16    | 2        | 6.0     | 1–3 steps  | Very high | Limit test
+================================================================================
+
+QUICK START
+===========
+
+1. DEVELOP (Week 1–2)
+   └─ Use LIGHT with debug=True
+   └─ Understand failure detection
+   └─ Verify rerouting logic
+
+2. VALIDATE (Week 2)
+   └─ Use SANDBOX (main testing)
+   └─ Run 10 seeds
+   └─ Get 75%+ completion rate
+
+3. TEST GENERALIZATION (Week 3)
+   └─ Run on LIGHT → SANDBOX → MEDIUM
+   └─ Check if scores drop <10%
+   └─ If they do, thresholds generalize well
+
+4. STRESS TEST (Week 3, Final)
+   └─ Run HARD and EXTREME
+   └─ Verify agent handles scaling
+   └─ Check decision speed isn't a bottleneck
+
+================================================================================
+
+IMPORT EXAMPLES
+===============
+
+from sandbox_env import make_sandbox_env
+from test_env_light import make_light_env
+from test_env_medium import make_medium_env
+from test_env_hard import make_hard_env
+from test_env_extreme import make_extreme_env
+
+env = make_light_env(seed=0, debug=True)      # 4 nodes, easy, show ground truth
+env = make_sandbox_env(seed=0, debug=False)   # 6 nodes, baseline
+env = make_medium_env(seed=0, debug=False)    # 8 nodes, harder
+env = make_hard_env(seed=0, debug=False)      # 12 nodes, stress
+env = make_extreme_env(seed=0, debug=False)   # 16 nodes, limit
+
+================================================================================
+
+EXPECTED PERFORMANCE
+====================
+
+Good Generalization (Your agent should aim for this):
+  LIGHT:      92%  (easy)
+  SANDBOX:    80%  (baseline)
+  MEDIUM:     78%  (only -2% drop)  ← Good!
+  HARD:       75%  (only -5% drop)  ← Good!
+  EXTREME:    70%  (only -10% drop) ← Good!
+
+Poor Generalization (Means you hardcoded thresholds):
+  LIGHT:      92%  (good)
+  SANDBOX:    80%  (okay)
+  MEDIUM:     65%  (big -15% drop)  ← Problem!
+  HARD:       40%  (collapse)       ← Problem!
+  EXTREME:    15%  (disaster)       ← Problem!
+
+================================================================================
+
+COMMON ISSUES & FIXES
+=====================
+
+❌ ISSUE: Low completion rate overall
+   → Increase rerouting aggressiveness
+   → Lower REROUTE_HEALTH_THRESHOLD (40 → 35)
+   → Increase latency penalty (-35 → -45)
+
+❌ ISSUE: Good on SANDBOX, bad on HARD/EXTREME
+   → Your thresholds are hardcoded to sandbox numbers
+   → Use relative signals, not absolute
+   → E.g.: "if error_rate > avg_error_rate * 2" not "if error_rate > 0.5"
+
+❌ ISSUE: High churn (too many reroutes)
+   → Raise REROUTE_HEALTH_THRESHOLD (40 → 45)
+   → Increase reroute cooldown (5 → 7)
+   → Require higher evidence before rerouting
+
+❌ ISSUE: Times out on EXTREME
+   → Your decision logic is too slow (O(n²) or worse)
+   → Reduce history window (5 → 3)
+   → Precompute once per step, not per task
+
+================================================================================
+
+TESTING CHECKLIST
+=================
+
+[ ] Single episode works
+    python -c "from sandbox_env import *; env = make_sandbox_env(); env.reset()"
+
+[ ] Agent can run on sandbox
+    python test_agent.py (using sandbox)
+
+[ ] Agent can run on all environments
+    python test_all_environments.py (after uncommenting)
+
+[ ] Performance on SANDBOX ≥ 75%
+    Run 10 seeds, average completion rate
+
+[ ] Generalization check
+    LIGHT: >85%, SANDBOX: >75%, MEDIUM: >70%, HARD: >65%
+    If any drops >10%, revise thresholds
+
+[ ] Speed check on EXTREME
+    If takes >1 min per episode, optimize decision logic
+
+[ ] No hardcoded sandbox numbers in code
+    Search for: "6", "4", "2.0" in your agent file
+    If found: why is it there? Should it be relative?
+
+================================================================================
+
+ENVIRONMENT PARAMETERS (Reference)
+===================================
+
+LIGHT:
+  n_nodes=4, node_capacity=4, arrival_rate=1.0
+  slack_range=(6, 15)
+  transitions: stable (nodes stay healthy 99%)
+
+SANDBOX:
+  n_nodes=6, node_capacity=4, arrival_rate=2.0
+  slack_range=(4, 10)
+  transitions: balanced (original design)
+
+MEDIUM:
+  n_nodes=8, node_capacity=4, arrival_rate=3.0
+  slack_range=(3, 8)
+  transitions: balanced (same as sandbox)
+
+HARD:
+  n_nodes=12, node_capacity=3, arrival_rate=4.5
+  slack_range=(2, 5)
+  transitions: aggressive (nodes degrade/fail more)
+
+EXTREME:
+  n_nodes=16, node_capacity=2, arrival_rate=6.0
+  slack_range=(1, 3)
+  transitions: very aggressive (many failures at once)
+
+================================================================================
+
+KEY METRICS TO TRACK
+====================
+
+1. COMPLETION RATE (Most Important)
+   = completed_count / (completed_count + failed_count)
+   Target: 75%+ on SANDBOX, 70%+ on MEDIUM, 60%+ on HARD
+
+2. DETECTION LATENCY (Medium Importance)
+   = Steps until no new assignments to a failed node
+   Target: < 5 steps
+
+3. CHURN RATE (Least Important)
+   = # of unnecessary reroutes (where node was actually healthy)
+   Target: Minimize (only reroute with evidence)
+
+================================================================================
+
+SCORING FORMULA (Reference)
+============================
+
+Score = completed * 1 + failed * (-1)
+
+Example 1: 80 completed, 20 failed
+  Score = 80 - 20 = 60  |  Completion rate = 80/100 = 80%
+
+Example 2: 60 completed, 40 failed
+  Score = 60 - 40 = 20  |  Completion rate = 60/100 = 60%
+
+Example 3: 75 completed, 25 failed
+  Score = 75 - 25 = 50  |  Completion rate = 75/100 = 75%
+
+Baseline (no health awareness): ~50 score, ~55% completion
+
+================================================================================
+
+WHEN TO USE debug=True vs debug=False
+======================================
+
+debug=True:
+  ✓ Shows info["node_true_states"] (ground truth health)
+  ✓ Shows info["failed_this_step"] (exactly when failures occur)
+  ✓ Good for learning and understanding failures
+  ✗ NOT available during evaluation (don't rely on it)
+
+debug=False:
+  ✓ Simulates real evaluation (no ground truth)
+  ✓ Only obs["nodes"] telemetry available
+  ✓ This is what your agent must handle
+  ✗ Harder to debug, but necessary for validation
+
+RECOMMENDATION:
+  • Development: debug=True (watch ground truth)
+  • Validation: debug=False (simulate real conditions)
+
+================================================================================
+
+ENVIRONMENT FILES PROVIDED
+===========================
+
+sandbox_env.py              - Original baseline (6 nodes)
+test_env_light.py           - Easy testing (4 nodes)
+test_env_medium.py          - Medium difficulty (8 nodes)
+test_env_hard.py            - Hard difficulty (12 nodes)
+test_env_extreme.py         - Extreme difficulty (16 nodes)
+test_all_environments.py    - Automated testing on all 5
+ENVIRONMENT_GUIDE.md        - Detailed explanation (read this!)
+ENVIRONMENTS_SUMMARY.txt    - This file (quick reference)
+
+All environments use the same cluster_env.py core engine.
+All follow the same interface (make_XXX_env function).
+Drop-in replacements for each other!
+
+================================================================================
+
+For more details, see: ENVIRONMENT_GUIDE.md
+
+================================================================================
